@@ -2,119 +2,134 @@ import os
 import osmnx as ox
 import networkx as nx
 import folium
-import time
+import streamlit as st
+from streamlit_folium import st_folium
 from geopy.geocoders import ArcGIS, Photon
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 
-# --- Función auxiliar: obtener coordenadas de una dirección ---
+# --- CONFIGURACIÓN GENERAL ---
+st.set_page_config(page_title="Optimizador de Rutas Medellín", layout="wide")
+st.title("🚚 Optimizador de Rutas de Entregas - Medellín")
+st.markdown("Introduce la dirección de inicio y las entregas para visualizar la mejor ruta 🗺️")
+
+# --- Función auxiliar: obtener coordenadas ---
 def obtener_coordenadas(direccion):
-    """Convierte una dirección en coordenadas (lat, lon) usando ArcGIS o Photon como respaldo."""
     geoloc_arcgis = ArcGIS(timeout=10)
     geoloc_photon = Photon(user_agent="route_optimizer_app")
-
     for intento in range(3):
         try:
             location = geoloc_arcgis.geocode(direccion)
             if location:
                 return (location.latitude, location.longitude)
-
             location = geoloc_photon.geocode(direccion)
             if location:
                 return (location.latitude, location.longitude)
-
         except (GeocoderTimedOut, GeocoderServiceError) as e:
-            print(f"⚠️ Error en intento {intento+1}: {e}. Reintentando...")
-            time.sleep(2)
+            st.warning(f"⚠️ Error en intento {intento+1}: {e}. Reintentando...")
+    st.error(f"❌ No se pudo obtener coordenadas para '{direccion}'.")
+    return None
 
-    raise ValueError(f"❌ No se pudo obtener coordenadas para la dirección: '{direccion}' después de varios intentos.")
-
-
-# --- Cargar grafo de Medellín con caché ---
+# --- Cargar grafo con caché ---
+@st.cache_resource
 def cargar_grafo():
-    """Carga el grafo de Medellín desde caché o lo descarga si no existe."""
     nombre_archivo = "medellin.graphml"
-
     if os.path.exists(nombre_archivo):
-        print("📂 Cargando grafo desde caché local...")
         G = ox.load_graphml(nombre_archivo)
     else:
-        print("🌐 Descargando grafo de Medellín (solo la primera vez)...")
+        st.info("🌐 Descargando grafo de Medellín (solo la primera vez)...")
         G = ox.graph_from_place("Medellín, Colombia", network_type='drive')
         ox.save_graphml(G, nombre_archivo)
-        print("💾 Grafo guardado en caché como 'medellin.graphml'.")
-
     return G
 
+# --- Interfaz de usuario ---
+with st.sidebar:
+    st.header("📍 Puntos de la ruta")
+    inicio = st.text_input("Dirección de inicio (punto de salida)", placeholder="Ej: Carrera 45 #56-12, Medellín")
+    num_entregas = st.number_input("Número de entregas:", min_value=1, max_value=10, value=3)
+    entregas = [st.text_input(f"Entrega {i+1}", key=f"entrega_{i}") for i in range(num_entregas)]
+    calcular = st.button("🚀 Calcular ruta")
 
-# --- Función principal ---
-def Ruta():
-    print("🚚 Bienvenido al optimizador de rutas de entregas en Medellín")
-    print("Ejemplo de dirección: Carrera 43 #1 Sur - 150, Medellín, Colombia")
+# --- Calcular ruta ---
+if calcular:
+    if not inicio.strip():
+        st.error("❌ Debes ingresar una dirección de inicio.")
+        st.stop()
+    entregas = [e for e in entregas if e.strip()]
+    if len(entregas) < 1:
+        st.error("❌ Debes ingresar al menos una entrega válida.")
+        st.stop()
 
-    # --- Pedir direcciones ---
-    direcciones = []
-    while True:
-        direccion = input("Introduce una dirección (o escribe 'fin' para terminar): ").strip()
-        if direccion.lower() == 'fin':
-            break
-        try:
-            coords = obtener_coordenadas(direccion)
-            direcciones.append((direccion, coords))
-            print(f"✅ Dirección añadida: {direccion} ({coords})")
-        except ValueError as e:
-            print(e)
+    # Obtener coordenadas
+    st.subheader("📍 Coordenadas obtenidas")
+    coords_list = []
+    inicio_coords = obtener_coordenadas(inicio)
+    if inicio_coords:
+        st.write(f"🏁 Inicio → {inicio_coords}")
+        coords_list.append(("Inicio", inicio_coords))
+    else:
+        st.error("❌ No se pudo obtener la dirección de inicio.")
+        st.stop()
+    for entrega in entregas:
+        coords = obtener_coordenadas(entrega)
+        if coords:
+            st.write(f"✅ {entrega} → {coords}")
+            coords_list.append((entrega, coords))
+    if len(coords_list) < 2:
+        st.error("⚠️ No se obtuvieron suficientes coordenadas válidas.")
+        st.stop()
 
-    if len(direcciones) < 2:
-        print("❌ Se necesitan al menos dos direcciones para calcular una ruta.")
-        return
+    # Cargar grafo
+    with st.spinner("🗺️ Cargando grafo de Medellín..."):
+        G = cargar_grafo()
 
-    print("\n📍 Direcciones registradas:")
-    for i, (direccion, coords) in enumerate(direcciones):
-        print(f"{i+1}. {direccion} -> {coords}")
-
-    # --- Cargar grafo ---
-    G = cargar_grafo()
-
-    # --- Calcular rutas consecutivas ---
-    print("\n🧭 Calculando rutas entre puntos...")
+    # Calcular rutas consecutivas
+    st.subheader("🧭 Cálculo de rutas")
     full_route = []
-
-    for i in range(len(direcciones) - 1):
-        start_coords = direcciones[i][1]
-        goal_coords = direcciones[i + 1][1]
-        print(f"Ruta {i+1}: {direcciones[i][0]} ➜ {direcciones[i+1][0]}")
-
+    for i in range(len(coords_list) - 1):
+        start_coords = coords_list[i][1]
+        goal_coords = coords_list[i + 1][1]
+        st.write(f"**Ruta {i+1}:** {coords_list[i][0]} ➜ {coords_list[i+1][0]}")
         orig = ox.distance.nearest_nodes(G, start_coords[1], start_coords[0])
         dest = ox.distance.nearest_nodes(G, goal_coords[1], goal_coords[0])
-
         try:
             route_segment = nx.shortest_path(G, orig, dest, weight='length')
             full_route.extend(route_segment if i == 0 else route_segment[1:])
         except nx.NetworkXNoPath:
-            print(f"⚠️ No hay ruta entre {direcciones[i][0]} y {direcciones[i+1][0]}.")
+            st.warning(f"⚠️ No hay ruta entre {coords_list[i][0]} y {coords_list[i+1][0]}.")
 
-    # --- Crear mapa ---
-    print("\n🗺️ Generando mapa con múltiples entregas...")
-    m = ox.plot_route_folium(G, full_route, route_map=folium.Map(location=direcciones[0][1], zoom_start=13))
+    if not full_route:
+        st.error("❌ No se pudo calcular ninguna ruta.")
+        st.stop()
 
-    for i, (direccion, coords) in enumerate(direcciones):
-        color = "green" if i == 0 else "red" if i == len(direcciones) - 1 else "blue"
-        folium.Marker(location=coords, popup=f"📍 {i+1}. {direccion}", icon=folium.Icon(color=color)).add_to(m)
+    # Guardar datos en sesión
+    st.session_state["coords_list"] = coords_list
+    st.session_state["G"] = G
+    st.session_state["full_route"] = full_route
+    st.success("✅ Ruta calculada correctamente. ¡Ahora puedes usar el slider para simular el carro!")
 
-    m.save("ruta_entregas_medellin.html")
-    print("✅ Mapa guardado como 'ruta_entregas_medellin.html'.")
-
-    # --- Simulación (opcional) ---
-    print("\n🚗 Simulando movimiento...")
+# --- Mostrar mapa y simulación con slider ---
+if "full_route" in st.session_state:
+    coords_list = st.session_state["coords_list"]
+    G = st.session_state["G"]
+    full_route = st.session_state["full_route"]
     nodes, _ = ox.graph_to_gdfs(G)
-    for i in range(1, min(10, len(full_route))):
-        current = nodes.loc[full_route[i]]
-        print(f"📍 Moviéndote a: ({current.y}, {current.x})")
-        time.sleep(1)
 
-    print("🎯 Todas las entregas completadas.")
+    st.subheader("🗺️ Mapa de la ruta")
+    # Slider para mover el carro
+    pos = st.slider("Posición del carro en la ruta", 0, len(full_route)-1, 0)
 
+    # Crear mapa base
+    base_map = folium.Map(location=coords_list[0][1], zoom_start=13)
+    base_map = ox.plot_route_folium(G, full_route, route_map=base_map, color="blue", weight=5, opacity=0.8)
 
-# --- Ejecutar programa ---
-if __name__ == "__main__":
-    Ruta()
+    # Marcadores de inicio, entregas y final
+    for j, (direccion, coords) in enumerate(coords_list):
+        color = "green" if j==0 else "red" if j==len(coords_list)-1 else "blue"
+        folium.Marker(location=coords, popup=f"{j}. {direccion}", icon=folium.Icon(color=color)).add_to(base_map)
+
+    # Marcador del carro según el slider
+    coord = nodes.loc[full_route[pos]][["y","x"]].values.tolist()
+    folium.Marker(location=coord, icon=folium.Icon(icon="car", prefix="fa", color="orange")).add_to(base_map)
+
+    st_folium(base_map, width=1200, height=600)
+q
