@@ -132,4 +132,3 @@ if "full_route" in st.session_state:
     folium.Marker(location=coord, icon=folium.Icon(icon="car", prefix="fa", color="orange")).add_to(base_map)
 
     st_folium(base_map, width=1200, height=600)
-q
