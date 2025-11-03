@@ -40,6 +40,7 @@ print("✅ Mapa guardado como ruta_tiempo_real.html")
 # --- 6. Simulación de movimiento ---
 for i in range(1, 4):
     # Simula moverte a lo largo del camino
-    current = ox.utils_geo.graph_to_gdfs(G).nodes.loc[route[min(i, len(route)-1)]]
+    nodes, edges = ox.graph_to_gdfs(G)
+    current = nodes.loc[route[min(i, len(route)-1)]]
     print(f"Moviéndote a: ({current.y}, {current.x})")
     time.sleep(2)
