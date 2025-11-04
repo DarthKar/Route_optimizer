@@ -12,22 +12,56 @@ st.set_page_config(page_title="Optimizador de Rutas Medellín", layout="wide")
 st.title("🚚 Optimizador de Rutas de Entregas - Medellín")
 st.markdown("Introduce la dirección de inicio y las entregas para visualizar la mejor ruta 🗺️")
 
+# --- Límites geográficos aproximados de Medellín ---
+LIMITE_NORTE = 6.420  # latitud máxima
+LIMITE_SUR = 6.170    # latitud mínima
+LIMITE_OESTE = -75.650  # longitud mínima
+LIMITE_ESTE = -75.470   # longitud máxima
+
+def dentro_de_medellin(lat, lon):
+    """Verifica si las coordenadas están dentro del rango aproximado de Medellín."""
+    return LIMITE_SUR <= lat <= LIMITE_NORTE and LIMITE_OESTE <= lon <= LIMITE_ESTE
+
 # --- Función auxiliar: obtener coordenadas ---
 def obtener_coordenadas(direccion):
     geoloc_arcgis = ArcGIS(timeout=10)
     geoloc_photon = Photon(user_agent="route_optimizer_app")
-    for intento in range(3):
+
+    for intento in range(1):
         try:
+            # --- Intentar con ArcGIS ---
             location = geoloc_arcgis.geocode(direccion)
             if location:
-                return (location.latitude, location.longitude)
+                lat, lon = location.latitude, location.longitude
+                # Validar si pertenece a Medellín según la dirección devuelta
+                if "Medellín" not in location.address:
+                    st.warning(f"⚠️ '{direccion}' no parece estar en Medellín (según geocodificador ArcGIS).")
+                    return None
+                if dentro_de_medellin(lat, lon):
+                    return (lat, lon)
+                else:
+                    st.warning(f"⚠️ '{direccion}' está fuera del área de cobertura (Medellín).")
+                    return None
+
+            # --- Intentar con Photon ---
             location = geoloc_photon.geocode(direccion)
             if location:
-                return (location.latitude, location.longitude)
+                lat, lon = location.latitude, location.longitude
+                if "Medellín" not in location.address:
+                    st.warning(f"⚠️ '{direccion}' no parece estar en Medellín (según geocodificador Photon).")
+                    return None
+                if dentro_de_medellin(lat, lon):
+                    return (lat, lon)
+                else:
+                    st.warning(f"⚠️ '{direccion}' está fuera del área de cobertura (Medellín).")
+                    return None
+
         except (GeocoderTimedOut, GeocoderServiceError) as e:
             st.warning(f"⚠️ Error en intento {intento+1}: {e}. Reintentando...")
+
     st.error(f"❌ No se pudo obtener coordenadas para '{direccion}'.")
     return None
+
 
 # --- Cargar grafo con caché ---
 @st.cache_resource
